@@ -4,8 +4,8 @@ const app = express();
 
 app.use(express.json());
 
-const odooUrl = 'http://localhost:8069/jsonrpc'; // Asegúrate de que esta es la URL correcta de tu servidor Odoo
-const db = 'papitas'; // Nombre de la base de datos
+const odooUrl = 'http://ec2-3-139-233-173.us-east-2.compute.amazonaws.com:8069/jsonrpc'; // Asegúrate de que esta es la URL correcta de tu servidor Odoo
+const db = 'odoo17'; // Nombre de la base de datos
 const username = 'odoo17';
 const password = 'odoo17';
 
