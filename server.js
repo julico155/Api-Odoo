@@ -1,5 +1,6 @@
 const express = require('express');
 const axios = require('axios');
+const admin = require('firebase-admin');
 const app = express();
 
 app.use(express.json());
@@ -8,6 +9,14 @@ const odooUrl = 'http://ec2-3-139-233-173.us-east-2.compute.amazonaws.com:8069/j
 const db = 'odoo17'; // Nombre de la base de datos
 const username = 'odoo17';
 const password = 'odoo17';
+
+// Inicializar Firebase Admin SDK
+const serviceAccount = require('./serviceAccountKey.json'); // Reemplaza con la ruta correcta a tu archivo JSON de servicio de Firebase
+admin.initializeApp({
+  credential: admin.credential.cert(serviceAccount),
+});
+
+
 
 // Función para obtener el UID del usuario en Odoo
 async function getOdooUid() {
@@ -381,6 +390,48 @@ app.get('/api/studentgrades', async (req, res) => {
 });
 
 
+// Nuevo endpoint para obtener las calificaciones de un estudiante por su ID
+app.get('/api/studentsgrades', async (req, res) => {
+    const { student_id } = req.query;
+    try {
+        const uid = await getOdooUid();
+        console.log('UID:', uid);
+        console.log('Student ID:', student_id);
+
+        // Obtener las calificaciones del estudiante basado en su ID
+        const gradesResponse = await axios.post(odooUrl, {
+            jsonrpc: "2.0",
+            method: "call",
+            params: {
+                service: "object",
+                method: "execute_kw",
+                args: [
+                    db, uid, password,
+                    'student.grade', 'search_read',
+                    [[
+                        ['student_id', '=', parseInt(student_id)]
+                    ]],
+                    { fields: ['student_id', 'batch_id', 'course_id', 'subject_id', 'grade', 'date', 'academic_term_id'] }
+                ],
+            },
+            id: new Date().getTime()
+        });
+
+        console.log('Grades Response Data:', gradesResponse.data);
+
+        if (gradesResponse.data.error) {
+            console.error('Error en la consulta de grades:', gradesResponse.data.error.message);
+            return res.status(500).json({ success: false, message: 'Error en la consulta de grades' });
+        }
+
+        res.json(gradesResponse.data.result);
+    } catch (error) {
+        console.error('Error:', error);
+        res.status(500).send('Internal Server Error');
+    }
+});
+
+
 // Nuevo endpoint para el login
 app.post('/api/login', async (req, res) => {
     const { email, password: mobile } = req.body;
@@ -418,6 +469,58 @@ app.post('/api/login', async (req, res) => {
         res.status(500).send('Internal Server Error');
     }
 });
+
+
+// Verificar y enviar notificaciones push cada minuto
+let lastCheckedDate = new Date(0); // Fecha inicial para comparar nuevos anuncios
+
+async function checkAndSendNotifications() {
+  try {
+    const uid = await getOdooUid();
+    const response = await axios.post(odooUrl, {
+      jsonrpc: "2.0",
+      method: "call",
+      params: {
+        service: "object",
+        method: "execute_kw",
+        args: [
+          db, uid, password,
+          'school.announcement', 'search_read',
+          [],
+          { fields: ['subject', 'content', 'date_created'] }
+        ],
+      },
+      id: new Date().getTime()
+    });
+    const announcements = response.data.result;
+
+    const newAnnouncements = announcements.filter(announcement => new Date(announcement.date_created) > lastCheckedDate);
+    if (newAnnouncements.length > 0) {
+      lastCheckedDate = new Date(newAnnouncements[newAnnouncements.length - 1].date_created); // Actualiza la fecha de la última verificación
+
+      newAnnouncements.forEach(async (announcement) => {
+        const message = {
+          notification: {
+            title: announcement.subject,
+            body: announcement.content,
+          },
+          topic: 'all', // Puedes usar 'all' para enviar a todos o manejar tokens específicos
+        };
+
+        try {
+          await admin.messaging().send(message);
+          console.log('Successfully sent message:', announcement.subject);
+        } catch (error) {
+          console.error('Error sending message:', error);
+        }
+      });
+    }
+  } catch (error) {
+    console.error('Error checking announcements:', error);
+  }
+}
+
+setInterval(checkAndSendNotifications, 3000); // Verifica cada minuto
 
 const PORT = process.env.PORT || 3000;
 app.listen(PORT, '0.0.0.0', () => {
